@@ -18,6 +18,7 @@
             border-radius: 5px; 
             white-space: pre-wrap;
             word-wrap: break-word;
+            font-size: 0.85rem;
         }
     </style>
 </head>
@@ -29,7 +30,7 @@
             <h4 class="mb-0">BossHub Server Security Scanner</h4>
         </div>
         <div class="card-body">
-            <p class="text-muted">โปรดระบุ IP Address หรือ Domain Name ของเซิร์ฟเวอร์ที่คุณต้องการสแกน (เช่น 127.0.0.1)</p>
+            <p class="text-muted">ระบบรันบน **Port 8989** และใช้รหัสผ่าน **root:BossHubRoot**</p>
             
             <form id="scanForm">
                 <div class="input-group mb-3">
@@ -58,11 +59,21 @@
 </div>
 
 <script>
+    // --- Configuration ---
     const API_HOST = window.location.hostname;
-    // API_URL ชี้ไปที่ Backend Python/Flask ที่รันบนพอร์ต 5000 (ตามที่เราตั้งค่าใน systemd)
-    const EXTERNAL_API_URL = `http://${API_HOST}:5000/api/scan/external`; 
-    const INTERNAL_API_URL = `http://${API_HOST}:5000/api/scan/internal`; 
+    const LISTEN_PORT = 8989; // ใช้ Port 8989
     
+    // API Endpoints
+    const EXTERNAL_API_URL = `http://${API_HOST}:${LISTEN_PORT}/api/scan/external`; 
+    const INTERNAL_API_URL = `http://${API_HOST}:${LISTEN_PORT}/api/scan/internal`; 
+    
+    // รหัสผ่านสำหรับ Basic Auth (root:BossHubRoot)
+    const AUTH_USERNAME = 'root'; 
+    const AUTH_PASSWORD = 'BossHubRoot'; 
+    // เข้ารหัส Base64 สำหรับ Header
+    const AUTH_TOKEN = 'Basic ' + btoa(AUTH_USERNAME + ':' + AUTH_PASSWORD); 
+    
+    // DOM Elements
     const form = document.getElementById('scanForm');
     const targetInput = document.getElementById('targetInput');
     const resultContainer = document.getElementById('resultContainer');
@@ -98,9 +109,18 @@
         try {
             const response = await fetch(EXTERNAL_API_URL, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': AUTH_TOKEN // เพิ่ม Authorization Header
+                },
                 body: JSON.stringify({ target: target })
             });
+
+            // Handle 401 Unauthorized (Basic Auth Failure)
+            if (response.status === 401) {
+                 scanResults.innerHTML = `<div class="alert alert-danger"><strong>Authentication Failed:</strong> ไม่สามารถเข้าถึง API ได้ โปรดตรวจสอบ Username/Password (root:BossHubRoot)</div>`;
+                 return;
+            }
 
             const data = await response.json();
             
@@ -113,7 +133,7 @@
             scanResults.innerHTML = formatExternalResults(data);
 
         } catch (error) {
-            scanResults.innerHTML = `<div class="alert alert-danger"><strong>Connection Error:</strong> ไม่สามารถเชื่อมต่อกับ Backend API (${EXTERNAL_API_URL}) ได้ โปรดตรวจสอบว่า service รันอยู่</div>`;
+            scanResults.innerHTML = `<div class="alert alert-danger"><strong>Connection Error:</strong> ไม่สามารถเชื่อมต่อกับ Backend API (${EXTERNAL_API_URL}) ได้ โปรดตรวจสอบว่า service รันอยู่บน Port 8989</div>`;
             console.error('Fetch error:', error);
         } finally {
             toggleButton(false);
@@ -127,7 +147,19 @@
         resultContainer.classList.remove('d-none');
 
         try {
-            const response = await fetch(INTERNAL_API_URL, { method: 'GET' });
+            const response = await fetch(INTERNAL_API_URL, { 
+                method: 'GET',
+                headers: {
+                    'Authorization': AUTH_TOKEN // เพิ่ม Authorization Header
+                }
+            });
+
+            // Handle 401 Unauthorized (Basic Auth Failure)
+            if (response.status === 401) {
+                 scanResults.innerHTML = `<div class="alert alert-danger"><strong>Authentication Failed:</strong> ไม่สามารถเข้าถึง API ได้ โปรดตรวจสอบ Username/Password (root:BossHubRoot)</div>`;
+                 return;
+            }
+
             const data = await response.json();
 
             if (!response.ok) {
@@ -138,7 +170,7 @@
             scanResults.innerHTML = formatInternalResults(data);
 
         } catch (error) {
-            scanResults.innerHTML = `<div class="alert alert-danger"><strong>Connection Error:</strong> ไม่สามารถเชื่อมต่อกับ Backend API (${INTERNAL_API_URL}) ได้ โปรดตรวจสอบว่า service รันอยู่</div>`;
+            scanResults.innerHTML = `<div class="alert alert-danger"><strong>Connection Error:</strong> ไม่สามารถเชื่อมต่อกับ Backend API (${INTERNAL_API_URL}) ได้ โปรดตรวจสอบว่า service รันอยู่บน Port 8989</div>`;
             console.error('Fetch error:', error);
         }
     }
@@ -149,7 +181,6 @@
     function formatExternalResults(data) {
         let html = '';
         
-        // Host Status
         const hostStatus = Object.values(data)[0]; 
         const status = hostStatus.status === 'up' ? 
             `<span class="badge bg-success">ONLINE (Host State: ${hostStatus.status})</span>` : 
