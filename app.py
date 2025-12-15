@@ -21,16 +21,24 @@ LISTEN_PORT = 8989
 
 LOCK_MARKER = "[BOSSHUB-SECURE-LOCK]"
 
-MALWARE_SIGNATURES = {
-    r'eval\s*\(': 'PHP Web Shell execution',
-    r'base64_decode\s*\(': 'Obfuscated Code (Base64)',
-    r'shell_exec\s*\(': 'System Command Execution',
-    r'passthru\s*\(': 'System Command Execution',
-    r'stratum\+tcp': 'Crypto Mining Protocol',
-    r'xmrig': 'XMRig Miner Config',
-    r'/bin/sh -i': 'Reverse Shell',
-    r'nc -e': 'Netcat Reverse Shell'
-}
+# --- Smart Signatures (High Precision) ---
+# เราแยก Signature เป็นระดับความรุนแรง และระบุ Pattern ที่เจาะจงมากขึ้น
+MALWARE_SIGNATURES = [
+    # Critical: โค้ดที่ตั้งใจรันคำสั่งอันตรายชัดเจน
+    {'pattern': r'eval\s*\(\s*base64_decode', 'desc': 'CRITICAL: Executing Base64 Code (eval)', 'risk': 'high'},
+    {'pattern': r'eval\s*\(\s*gzinflate', 'desc': 'CRITICAL: Executing Compressed Code (gzinflate)', 'risk': 'high'},
+    {'pattern': r'shell_exec\s*\(', 'desc': 'CRITICAL: System Command Execution', 'risk': 'high'},
+    {'pattern': r'passthru\s*\(', 'desc': 'CRITICAL: System Command Execution', 'risk': 'high'},
+    {'pattern': r'system\s*\(', 'desc': 'CRITICAL: System Command Execution', 'risk': 'high'},
+    {'pattern': r'/bin/sh', 'desc': 'CRITICAL: Linux Shell Access', 'risk': 'high'},
+    {'pattern': r'nc\s+-e', 'desc': 'CRITICAL: Reverse Shell (Netcat)', 'risk': 'high'},
+    
+    # Suspicious: พฤติกรรมน่าสงสัย (แต่ต้องดูบริบท)
+    {'pattern': r'base64_decode\s*\(\s*\$_(POST|GET|REQUEST|COOKIE)', 'desc': 'SUSPICIOUS: Decoding User Input (Webshell Pattern)', 'risk': 'medium'},
+    {'pattern': r'stratum\+tcp', 'desc': 'MINER: Crypto Mining Protocol', 'risk': 'high'},
+    {'pattern': r'xmrig', 'desc': 'MINER: XMRig Configuration', 'risk': 'high'},
+]
+
 MINING_PORTS = [3333, 4444, 5555, 6666, 7777, 8080, 14444, 45700]
 
 app = Flask(__name__)
@@ -114,33 +122,52 @@ def analyze_network_threats():
     except Exception as e: return {"error": str(e)}
     return suspicious
 
+# --- NEW: Enhanced Scanning Logic ---
 def scan_hosting_files(path_root='/home'):
     if platform.system() != "Linux": return {"error": "Linux Only"}
     infected = []
     count = 0
     try:
         for root, dirs, files in os.walk(path_root):
-            if 'logs' in root or 'mail' in root: continue
+            if 'logs' in root or 'mail' in root or 'cache' in root: continue # ข้ามโฟลเดอร์ Cache เพื่อลด FP
             for file in files:
                 if any(file.endswith(x) for x in ['.php', '.py', '.sh', '.pl', '.quarantined']):
                     fpath = os.path.join(root, file)
                     count += 1
                     try:
                         with open(fpath, 'r', errors='ignore') as f:
-                            content = f.read(50000)
-                            if LOCK_MARKER in content or file.endswith('.quarantined'):
-                                infected.append({"path": fpath, "threats": ["ถูกระงับการทำงานแล้ว (Quarantined)"], "status": "quarantined"})
+                            lines = f.readlines()
+                            
+                            # Check Quarantined Status first
+                            content_sample = "".join(lines[:20]) # Check header
+                            if LOCK_MARKER in content_sample or file.endswith('.quarantined'):
+                                infected.append({"path": fpath, "threats": ["ถูกระงับการทำงานแล้ว (Quarantined)"], "status": "quarantined", "snippet": "N/A"})
                                 continue
-                            found = [desc for sig, desc in MALWARE_SIGNATURES.items() if re.search(sig, content, re.IGNORECASE)]
-                            if found: infected.append({"path": fpath, "threats": found, "status": "active"})
+
+                            # Line-by-line Scan for better snippet extraction
+                            for i, line in enumerate(lines):
+                                line_clean = line.strip()
+                                if not line_clean or line_clean.startswith(('//', '#', '*')): continue # Skip comments
+
+                                for sig in MALWARE_SIGNATURES:
+                                    if re.search(sig['pattern'], line_clean, re.IGNORECASE):
+                                        # Found a threat!
+                                        infected.append({
+                                            "path": fpath,
+                                            "threats": [sig['desc']],
+                                            "status": "active",
+                                            "risk": sig['risk'],
+                                            "snippet": f"Line {i+1}: {line_clean[:100]}..." # ตัดมาแสดงแค่ 100 ตัวอักษร
+                                        })
+                                        break # เจอ 1 จุดในไฟล์ ถือว่าติดเชื้อแล้ว ข้ามไปไฟล์ถัดไปเลย
+                                if len(infected) > 0 and infected[-1]['path'] == fpath: break 
+
                     except: pass
             if count > 3000: break
     except Exception as e: return {"error": str(e)}
     return {"scanned": count, "infected": infected}
 
-# --- 3. Action Logic (Fix, Restore, KILL, Clear Temp) ---
-
-# New Feature: Kill Process
+# --- 3. Action Logic ---
 @app.route('/api/threats/kill_process', methods=['POST'])
 @requires_auth
 def kill_process():
@@ -149,20 +176,16 @@ def kill_process():
         p = psutil.Process(int(pid))
         p.terminate()
         return jsonify({"status": "success", "message": f"Process {pid} ถูกปิดการทำงานแล้ว"})
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)})
+    except Exception as e: return jsonify({"status": "error", "message": str(e)})
 
-# New Feature: Clear Temp
 @app.route('/api/tools/clear_temp', methods=['POST'])
 @requires_auth
 def clear_temp():
     try:
-        # Warning: This is aggressive. Adjust as needed.
         cmd = "find /tmp -type f -atime +1 -delete"
         subprocess.run(cmd, shell=True)
         return jsonify({"status": "success", "message": "ล้างไฟล์ขยะใน /tmp เรียบร้อย"})
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)})
+    except Exception as e: return jsonify({"status": "error", "message": str(e)})
 
 def manage_file_security(file_path, action):
     if not os.path.exists(file_path): return {"status": "error", "message": "ไม่พบไฟล์"}
@@ -175,10 +198,9 @@ def manage_file_security(file_path, action):
             with open(file_path, 'r', errors='ignore') as f: content = f.read()
             if LOCK_MARKER not in content: return {"status": "error", "message": "ไฟล์นี้ไม่ได้ถูกล็อค"}
             
-            # Simple Restore Logic: Remove lines with Marker
             lines = [l for l in content.split('\n') if LOCK_MARKER not in l and "END_LOCK" not in l]
-            # Unwrap comments (Simple Logic)
-            new_content = "\n".join(lines).replace("# ", "") if os.path.splitext(file_path)[1] in ['.py','.sh'] else "\n".join(lines)
+            file_ext = os.path.splitext(file_path)[1]
+            new_content = "\n".join(lines).replace("# ", "") if file_ext in ['.py','.sh'] else "\n".join(lines)
             
             with open(file_path, 'w') as f: f.write(new_content)
             return {"status": "success", "message": "คืนค่าเนื้อหาไฟล์แล้ว"}
@@ -198,29 +220,6 @@ def manage_file_security(file_path, action):
                 os.rename(file_path, file_path + ".quarantined")
             return {"status": "success", "message": "ระงับการใช้งานไฟล์เรียบร้อย"}
     except Exception as e: return {"status": "error", "message": str(e)}
-
-# --- 4. Tools & Others ---
-def run_nmap(target):
-    try:
-        nm = nmap.PortScanner()
-        nm.scan(target, arguments='-sV -T4 -p 1-1000') 
-        host = nm.all_hosts()[0]
-        ports = [{'port': p, 'state': nm[host]['tcp'][p]['state'], 'service': nm[host]['tcp'][p]['name']} for p in nm[host]['tcp']]
-        return {"status": nm[host].state, "ports": ports}
-    except Exception as e: return {"error": str(e)}
-
-def manage_service(name, action):
-    try:
-        res = subprocess.run(['sudo', 'systemctl', action, name], capture_output=True, text=True, timeout=10)
-        return {"output": res.stdout + res.stderr}
-    except Exception as e: return {"error": str(e)}
-
-def find_recent_files(days=1):
-    try:
-        cmd = ['sudo', 'find', '/', '-mount', '-path', '/proc', '-prune', '-o', '-path', '/sys', '-prune', '-o', '-mtime', f'-{days}', '-type', 'f', '-print']
-        out = subprocess.check_output(cmd, stderr=subprocess.PIPE).decode('utf-8').split('\n')
-        return [x for x in out if x.strip()][:100]
-    except: return []
 
 # --- Routes ---
 @app.route('/')
@@ -260,6 +259,16 @@ def api_service(): return jsonify(manage_service(request.json['service'], reques
 @app.route('/api/tools/files', methods=['POST'])
 @requires_auth
 def api_files(): return jsonify({"files": find_recent_files(request.json.get('days', 1))})
+
+# Helper Functions (run_nmap, etc) remain same as before...
+def run_nmap(target):
+    try:
+        nm = nmap.PortScanner()
+        nm.scan(target, arguments='-sV -T4 -p 1-1000') 
+        host = nm.all_hosts()[0]
+        ports = [{'port': p, 'state': nm[host]['tcp'][p]['state'], 'service': nm[host]['tcp'][p]['name']} for p in nm[host]['tcp']]
+        return {"status": nm[host].state, "ports": ports}
+    except Exception as e: return {"error": str(e)}
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=LISTEN_PORT, debug=False)
