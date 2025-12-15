@@ -19,8 +19,7 @@ USERNAME = 'root'
 PASSWORD = 'BossHubRoot' 
 LISTEN_PORT = 8989
 
-# --- Malware & Threat Signatures ---
-# คำสั่งหรือ pattern ที่มักเจอใน Web Shell หรือ Script ขุด
+# --- Signatures & Constants ---
 MALWARE_SIGNATURES = {
     r'eval\s*\(': 'PHP Web Shell execution',
     r'base64_decode\s*\(': 'Obfuscated Code (Base64)',
@@ -28,25 +27,19 @@ MALWARE_SIGNATURES = {
     r'passthru\s*\(': 'System Command Execution',
     r'stratum\+tcp': 'Crypto Mining Protocol',
     r'xmrig': 'XMRig Miner Config',
-    r'cpuminer': 'CPU Miner Config',
     r'/bin/sh -i': 'Reverse Shell',
-    r'nc -e': 'Netcat Reverse Shell',
-    r'fsockopen\s*\(': 'Socket Connection (Potential Reverse Shell)'
+    r'nc -e': 'Netcat Reverse Shell'
 }
-
-# Mining Ports (Common pools)
 MINING_PORTS = [3333, 4444, 5555, 6666, 7777, 8080, 14444, 45700]
 
 app = Flask(__name__)
 
-# --- Auth Helpers ---
+# --- Auth & Helpers ---
 def check_auth(username, password):
     return username == USERNAME and password == PASSWORD
 
 def authenticate():
-    return Response(
-    'Access Denied.\nLogin Required.', 401,
-    {'WWW-Authenticate': 'Basic realm="BossHub Security"'})
+    return Response('Login Required', 401, {'WWW-Authenticate': 'Basic realm="BossHub Security"'})
 
 def requires_auth(f):
     @wraps(f)
@@ -57,184 +50,181 @@ def requires_auth(f):
         return f(*args, **kwargs)
     return decorated
 
-# --- Core Security Logic ---
+def get_size(bytes, suffix="B"):
+    factor = 1024
+    for unit in ["", "K", "M", "G", "T", "P"]:
+        if bytes < factor: return f"{bytes:.2f}{unit}{suffix}"
+        bytes /= factor
 
-def analyze_network_connections():
-    """ตรวจสอบการเชื่อมต่อ Network ที่ผิดปกติ (Packet/Connection Level)"""
-    suspicious_conns = []
-    try:
-        # ดึง Connection ทั้งหมด (TCP/UDP)
-        connections = psutil.net_connections(kind='inet')
-        
-        for conn in connections:
-            # ข้าม Loopback
-            if conn.raddr and conn.raddr.ip == '127.0.0.1':
-                continue
-            
-            risk_score = 0
-            risk_reasons = []
-
-            # 1. เช็ค Port ขุด Bitcoin
-            if conn.raddr and conn.raddr.port in MINING_PORTS:
-                risk_score += 5
-                risk_reasons.append(f"Connected to Mining Port {conn.raddr.port}")
-
-            # 2. เช็ค Process ที่สร้าง Connection นี้
-            try:
-                process = psutil.Process(conn.pid)
-                proc_name = process.name()
-                cmdline = " ".join(process.cmdline())
-                
-                # เช็คชื่อ Process อันตราย
-                if any(x in proc_name.lower() for x in ['xmrig', 'minerd', 'kworker_ds', 'python_backdoor']):
-                    risk_score += 10
-                    risk_reasons.append(f"Suspicious Process Name: {proc_name}")
-
-                # เช็คว่ารันจาก /tmp หรือไม่ (Malware ชอบรันในนี้)
-                try:
-                    exe_path = process.exe()
-                    if exe_path.startswith('/tmp') or exe_path.startswith('/dev/shm'):
-                        risk_score += 8
-                        risk_reasons.append(f"Running from temporary path: {exe_path}")
-                except (psutil.AccessDenied, psutil.NoSuchProcess):
-                    pass
-
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                proc_name = "Unknown/Kernel"
-                cmdline = "N/A"
-
-            # ถ้ามีความเสี่ยง ให้บันทึก
-            if risk_score > 0 or (conn.status == 'ESTABLISHED' and conn.raddr):
-                # กรองแสดงเฉพาะ Established หรือที่มีความเสี่ยงสูง
-                if risk_score > 0:
-                    status_label = "DANGEROUS"
-                else:
-                    status_label = "NORMAL"
-                    continue # ถ้า Normal ไม่ต้องส่งไปรกหน้าจอ ยกเว้นอยากดู Traffic
-
-                suspicious_conns.append({
-                    "fd": conn.fd,
-                    "family": str(conn.family),
-                    "type": str(conn.type),
-                    "laddr": f"{conn.laddr.ip}:{conn.laddr.port}",
-                    "raddr": f"{conn.raddr.ip}:{conn.raddr.port}" if conn.raddr else "N/A",
-                    "status": conn.status,
-                    "pid": conn.pid,
-                    "program": proc_name,
-                    "risk_score": risk_score,
-                    "reasons": ", ".join(risk_reasons),
-                    "label": status_label
-                })
-
-    except Exception as e:
-        app.logger.error(f"Network Scan Error: {e}")
-        return {"error": str(e)}
-
-    return sorted(suspicious_conns, key=lambda x: x['risk_score'], reverse=True)
-
-def scan_hosting_scripts(path_root='/home'):
-    """สแกนไฟล์ใน HestiaCP/VestaCP (/home/user/web/...) เพื่อหา Code Injection"""
-    if platform.system() != "Linux":
-        return {"error": "Hosting scan supports Linux only"}
-
-    infected_files = []
-    scanned_count = 0
-    
-    # กำหนด extension ที่จะสแกน
-    target_exts = ['.php', '.py', '.sh', '.pl', '.cgi']
-
-    try:
-        # เดินดูไฟล์ใน /home (จุดที่ Web Control Panel เก็บไฟล์)
-        for root, dirs, files in os.walk(path_root):
-            # ข้าม Folder ระบบ หรือ Log
-            if 'logs' in root or 'mail' in root:
-                continue
-
-            for file in files:
-                if any(file.endswith(ext) for ext in target_exts):
-                    file_path = os.path.join(root, file)
-                    scanned_count += 1
-                    
-                    try:
-                        # อ่านไฟล์แบบ Binary เพื่อหลีกเลี่ยง Encoding error แล้ว decode บางส่วน
-                        with open(file_path, 'r', errors='ignore') as f:
-                            content = f.read(100000) # อ่านแค่ 100KB แรกเพื่อ performance
-                            
-                            found_sigs = []
-                            for sig, desc in MALWARE_SIGNATURES.items():
-                                if re.search(sig, content, re.IGNORECASE):
-                                    found_sigs.append(desc)
-                            
-                            if found_sigs:
-                                stat = os.stat(file_path)
-                                infected_files.append({
-                                    "path": file_path,
-                                    "owner_uid": stat.st_uid,
-                                    "modified": datetime.datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M:%S'),
-                                    "threats": found_sigs
-                                })
-                    except Exception as err:
-                        # Permission denied or locked file
-                        continue
-                        
-            # Limit การสแกนเพื่อไม่ให้ Server ค้าง (Safety Cut)
-            if scanned_count > 5000:
-                break
-
-    except Exception as e:
-        return {"error": str(e)}
-
-    return {
-        "scanned_count": scanned_count,
-        "infected_count": len(infected_files),
-        "details": infected_files
-    }
-
-# --- Existing Basic Functions (Optimized) ---
+# --- 1. System Info & Monitoring ---
 def get_system_details():
-    # ... (Code เดิม เก็บไว้ใช้)
     uname = platform.uname()
+    boot_time = datetime.datetime.fromtimestamp(psutil.boot_time())
+    
+    # Disk
+    partitions = []
+    try:
+        for p in psutil.disk_partitions():
+            try:
+                u = psutil.disk_usage(p.mountpoint)
+                partitions.append({"mount": p.mountpoint, "total": get_size(u.total), "used": get_size(u.used), "percent": u.percent})
+            except: pass
+    except: pass
+
+    # Network IPs
+    net_info = {}
+    try:
+        for name, addrs in psutil.net_if_addrs().items():
+            for addr in addrs:
+                if str(addr.family) == 'AddressFamily.AF_INET':
+                    net_info[name] = addr.address
+    except: pass
+
     return {
         "os": f"{uname.system} {uname.release}",
-        "node": uname.node,
-        "cpu_percent": psutil.cpu_percent(),
-        "ram_percent": psutil.virtual_memory().percent
+        "uptime": str(datetime.datetime.now() - boot_time).split('.')[0],
+        "cpu": {"cores": psutil.cpu_count(), "percent": psutil.cpu_percent()},
+        "ram": {"total": get_size(psutil.virtual_memory().total), "percent": psutil.virtual_memory().percent},
+        "disk": partitions,
+        "network": net_info
     }
 
-# --- Flask Routes ---
+def get_deep_security_info():
+    """Firewall & Auth Logs"""
+    firewall = "N/A"
+    logs = []
+    if platform.system() == "Linux":
+        try:
+            firewall = subprocess.run(['sudo', 'ufw', 'status'], capture_output=True, text=True).stdout or "UFW Inactive"
+        except: firewall = "Error checking UFW"
+        
+        try:
+            logs = subprocess.check_output(['last', '-n', '5'], timeout=2).decode('utf-8').split('\n')
+        except: logs = ["Error reading logs"]
+    return {"firewall": firewall, "logs": [l for l in logs if l.strip()]}
 
+# --- 2. Threat Hunting (Network & Process) ---
+def analyze_network_threats():
+    suspicious = []
+    try:
+        for conn in psutil.net_connections(kind='inet'):
+            if conn.status != 'ESTABLISHED' or (conn.raddr and conn.raddr.ip == '127.0.0.1'): continue
+            
+            risk = 0
+            reasons = []
+            
+            # Check Port
+            if conn.raddr and conn.raddr.port in MINING_PORTS:
+                risk += 10; reasons.append(f"Mining Port {conn.raddr.port}")
+            
+            # Check Process
+            try:
+                proc = psutil.Process(conn.pid)
+                if any(x in proc.name().lower() for x in ['xmrig', 'minerd', 'kworker_ds']):
+                    risk += 10; reasons.append("Miner Process Name")
+                if proc.exe().startswith('/tmp') or proc.exe().startswith('/dev/shm'):
+                    risk += 8; reasons.append("Running from /tmp")
+            except: pass
+
+            if risk > 0:
+                suspicious.append({
+                    "pid": conn.pid, "laddr": f"{conn.laddr.ip}:{conn.laddr.port}",
+                    "raddr": f"{conn.raddr.ip}:{conn.raddr.port}" if conn.raddr else "N/A",
+                    "risk": risk, "reasons": ", ".join(reasons)
+                })
+    except Exception as e: return {"error": str(e)}
+    return suspicious
+
+# --- 3. Malware Scanner (Hosting) ---
+def scan_hosting_files(path_root='/home'):
+    if platform.system() != "Linux": return {"error": "Linux Only"}
+    infected = []
+    count = 0
+    try:
+        for root, dirs, files in os.walk(path_root):
+            if 'logs' in root or 'mail' in root: continue
+            for file in files:
+                if any(file.endswith(x) for x in ['.php', '.py', '.sh']):
+                    fpath = os.path.join(root, file)
+                    count += 1
+                    try:
+                        with open(fpath, 'r', errors='ignore') as f:
+                            content = f.read(50000) # Read first 50KB
+                            found = [desc for sig, desc in MALWARE_SIGNATURES.items() if re.search(sig, content, re.IGNORECASE)]
+                            if found:
+                                infected.append({"path": fpath, "threats": found})
+                    except: pass
+            if count > 3000: break # Safety limit
+    except Exception as e: return {"error": str(e)}
+    return {"scanned": count, "infected": infected}
+
+# --- 4. System Tools (Nmap, Service, Files) ---
+def run_nmap(target):
+    try:
+        nm = nmap.PortScanner()
+        nm.scan(target, arguments='-sV -T4 -p 1-1000 --script http-headers') # Quick Scan top 1000
+        host = nm.all_hosts()[0]
+        ports = []
+        if 'tcp' in nm[host]:
+            for p in nm[host]['tcp']:
+                ports.append({'port': p, 'state': nm[host]['tcp'][p]['state'], 'service': nm[host]['tcp'][p]['name']})
+        return {"status": nm[host].state, "ports": ports}
+    except Exception as e: raise Exception(str(e))
+
+def manage_service(name, action):
+    if action not in ['start', 'stop', 'restart', 'status']: return {"error": "Invalid action"}
+    cmd = ['sudo', 'systemctl', action, name]
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        return {"output": res.stdout + res.stderr}
+    except Exception as e: return {"error": str(e)}
+
+def find_recent_files(days=1):
+    cmd = ['sudo', 'find', '/', '-mount', '-path', '/proc', '-prune', '-o', '-path', '/sys', '-prune', 
+           '-o', '-mtime', f'-{days}', '-type', 'f', '-print']
+    try:
+        out = subprocess.check_output(cmd, stderr=subprocess.PIPE).decode('utf-8').split('\n')
+        return [x for x in out if x.strip()][:100] # Limit 100 files
+    except Exception as e: return []
+
+# --- Routes ---
 @app.route('/')
 @requires_auth
-def index():
-    return render_template('index.html', api_port=LISTEN_PORT)
+def index(): return render_template('index.html')
 
-@app.route('/api/scan/network_threats', methods=['GET'])
+@app.route('/api/stats')
 @requires_auth
-def api_network_threats():
-    """API: ตรวจ Packet/Connection อันตราย"""
-    results = analyze_network_connections()
-    return jsonify({"data": results, "count": len(results)})
+def api_stats(): return jsonify(get_system_details())
 
-@app.route('/api/scan/hosting_malware', methods=['GET'])
+@app.route('/api/security_basic')
 @requires_auth
-def api_hosting_malware():
-    """API: ตรวจ Script ใน Hestia/Vesta"""
-    # รับ path จาก parameter หรือ default เป็น /home
-    target_path = request.args.get('path', '/home')
-    results = scan_hosting_scripts(target_path)
-    return jsonify(results)
+def api_sec_basic(): return jsonify(get_deep_security_info())
 
-@app.route('/api/server/quick_stats', methods=['GET'])
+@app.route('/api/threats/network')
 @requires_auth
-def api_quick_stats():
-    return jsonify(get_system_details())
+def api_threat_net(): return jsonify(analyze_network_threats())
 
-# ... (Routes เดิม เช่น External Scan, Service Manager ให้คงไว้ตามเดิมจากไฟล์ก่อนหน้าถ้าจำเป็น)
-# เพื่อความกระชับ ผมจะใส่เฉพาะส่วนใหม่ที่สำคัญ แต่ถ้าคุณบอสต้องการรวม ผมรวมให้ได้ครับ
-# (ในที่นี้ Code นี้รันได้เลยในส่วนของฟีเจอร์ใหม่)
+@app.route('/api/threats/malware')
+@requires_auth
+def api_threat_malware(): 
+    return jsonify(scan_hosting_files(request.args.get('path', '/home')))
+
+@app.route('/api/tools/nmap', methods=['POST'])
+@requires_auth
+def api_nmap():
+    try: return jsonify(run_nmap(request.json['target']))
+    except Exception as e: return jsonify({"error": str(e)}), 500
+
+@app.route('/api/tools/service', methods=['POST'])
+@requires_auth
+def api_service():
+    d = request.json
+    return jsonify(manage_service(d['service'], d['action']))
+
+@app.route('/api/tools/files', methods=['POST'])
+@requires_auth
+def api_files():
+    return jsonify({"files": find_recent_files(request.json.get('days', 1))})
 
 if __name__ == '__main__':
-    # ตรวจสอบสิทธิ์ Root ก่อนรัน เพราะต้องอ่าน /home ของ user อื่น
-    if os.geteuid() != 0:
-        print("WARNING: Script นี้ควรทำงานด้วยสิทธิ์ Root เพื่อสแกน HestiaCP/VestaCP ได้ครบทุก User")
     app.run(host='0.0.0.0', port=LISTEN_PORT, debug=False)
