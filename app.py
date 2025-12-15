@@ -6,13 +6,15 @@ import subprocess
 import logging
 import base64
 import os
+import socket
+import datetime
 from functools import wraps
 from flask import Flask, request, jsonify, render_template, Response
 
 # --- Configuration ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Credentials for Basic Auth
+# Credentials
 USERNAME = 'root' 
 PASSWORD = 'BossHubRoot' 
 LISTEN_PORT = 8989
@@ -29,18 +31,15 @@ class ServiceActionError(Exception):
 
 # --- Security Functions ---
 def check_auth(username, password):
-    """Checks if a username / password combination is valid."""
     return username == USERNAME and password == PASSWORD
 
 def authenticate():
-    """Sends a 401 response that enables basic auth."""
     return Response(
     'Could not verify your access level for that URL.\n'
     'You have to login with proper credentials', 401,
     {'WWW-Authenticate': 'Basic realm="Login Required"'})
 
 def requires_auth(f):
-    """Decorator to protect API routes with Basic Auth."""
     @wraps(f)
     def decorated(*args, **kwargs):
         auth = request.authorization
@@ -49,13 +48,111 @@ def requires_auth(f):
         return f(*args, **kwargs)
     return decorated
 
-# --- Scanner Core Functions ---
+# --- Helper: Get Size ---
+def get_size(bytes, suffix="B"):
+    """Scale bytes to its proper format"""
+    factor = 1024
+    for unit in ["", "K", "M", "G", "T", "P"]:
+        if bytes < factor:
+            return f"{bytes:.2f}{unit}{suffix}"
+        bytes /= factor
+
+# --- Scanner & System Functions ---
+
+def get_system_details():
+    """Retrieves comprehensive system information."""
+    uname = platform.uname()
+    boot_time_timestamp = psutil.boot_time()
+    bt = datetime.datetime.fromtimestamp(boot_time_timestamp)
+    
+    # Network Info
+    net_info = {}
+    if_addrs = psutil.net_if_addrs()
+    for interface_name, interface_addresses in if_addrs.items():
+        for address in interface_addresses:
+            if str(address.family) == 'AddressFamily.AF_INET':
+                net_info[interface_name] = {'ip': address.address, 'netmask': address.netmask}
+            elif str(address.family) == 'AddressFamily.AF_PACKET': # MAC Address
+                 if interface_name not in net_info: net_info[interface_name] = {}
+                 net_info[interface_name]['mac'] = address.address
+
+    # Disk Info
+    partitions = []
+    try:
+        for partition in psutil.disk_partitions():
+            try:
+                partition_usage = psutil.disk_usage(partition.mountpoint)
+                partitions.append({
+                    "device": partition.device,
+                    "mountpoint": partition.mountpoint,
+                    "fstype": partition.fstype,
+                    "total": get_size(partition_usage.total),
+                    "used": get_size(partition_usage.used),
+                    "free": get_size(partition_usage.free),
+                    "percent": partition_usage.percent
+                })
+            except PermissionError:
+                continue
+    except Exception as e:
+        app.logger.error(f"Error reading disk info: {e}")
+
+    # Memory
+    svmem = psutil.virtual_memory()
+    
+    return {
+        "os": {
+            "system": uname.system,
+            "node_name": uname.node,
+            "release": uname.release,
+            "version": uname.version,
+            "machine": uname.machine,
+            "uptime": str(datetime.datetime.now() - bt).split('.')[0]
+        },
+        "cpu": {
+            "physical_cores": psutil.cpu_count(logical=False),
+            "total_cores": psutil.cpu_count(logical=True),
+            "usage_per_core": psutil.cpu_percent(percpu=True, interval=1),
+            "total_usage": psutil.cpu_percent()
+        },
+        "memory": {
+            "total": get_size(svmem.total),
+            "available": get_size(svmem.available),
+            "used": get_size(svmem.used),
+            "percent": svmem.percent
+        },
+        "disk": partitions,
+        "network": net_info
+    }
+
+def get_firewall_status():
+    """Checks UFW status on Linux."""
+    if platform.system() != "Linux":
+        return "Firewall check supported only on Linux."
+    
+    try:
+        # Check UFW
+        result = subprocess.run(['sudo', 'ufw', 'status', 'verbose'], capture_output=True, text=True)
+        return result.stdout
+    except FileNotFoundError:
+        return "UFW not installed."
+    except Exception as e:
+        return f"Error checking firewall: {str(e)}"
+
+def get_auth_logs(lines=10):
+    """Gets the last login attempts."""
+    if platform.system() != "Linux":
+        return ["Log check supported only on Linux."]
+    
+    try:
+        result = subprocess.check_output(['last', '-n', str(lines)], timeout=5).decode('utf-8').split('\n')
+        return [line for line in result if line.strip()]
+    except Exception as e:
+        return [f"Error retrieving logs: {str(e)}"]
 
 def run_nmap_full_scan(target):
-    """Runs a full Nmap scan (1-65535) for port, service, and security headers."""
     try:
         nm = nmap.PortScanner()
-        # Full scan: -p- (1-65535)
+        # Full scan: -p- (1-65535) with service detection
         arguments = '-sV -T4 -p- --script http-headers'
         nm.scan(target, arguments=arguments)
     except nmap.nmap.PortScannerError as e:
@@ -94,11 +191,9 @@ def run_nmap_full_scan(target):
             if script['id'] == 'http-headers':
                 security_headers = script['output'].strip().split('\n')
     results['security_headers'] = security_headers
-
     return results
 
 def check_local_security_and_user():
-    """Checks for running users, resource usage, and suspicious processes."""
     checks = {}
     
     if platform.system() == "Linux":
@@ -107,10 +202,9 @@ def check_local_security_and_user():
             logged_in_users = [line.strip() for line in output if line.strip()]
             checks['logged_in_users'] = logged_in_users
         except Exception as e:
-             app.logger.warning(f"Error checking logged-in users: {e}")
              checks['logged_in_users'] = ["Error retrieving user info"]
     else:
-        checks['logged_in_users'] = [f"User check only supported on Linux. Current OS: {platform.system()}"]
+        checks['logged_in_users'] = [f"OS: {platform.system()}"]
     
     high_cpu_processes = []
     CPU_THRESHOLD = 50 
@@ -136,16 +230,13 @@ def check_local_security_and_user():
             continue
              
     checks['high_cpu_processes'] = high_cpu_processes
-    checks['security_note'] = "การตรวจสอบไฟล์อันตรายต้องใช้เครื่องมือเฉพาะทาง (เช่น ClamAV) หรือการตรวจสอบ Hash Integrity ของไฟล์ระบบหลัก (Baseline)."
-
+    checks['security_note'] = "การตรวจสอบไฟล์อันตรายต้องใช้เครื่องมือเฉพาะทาง (ClamAV) หรือ Checksum"
     return checks
 
 def scan_latest_files(days=1):
-    """Scans for files created or modified in the last 'days' across the system."""
     if platform.system() != "Linux":
         raise UnsupportedOSError("File scanning is only supported on Linux.")
 
-    # Exclude directories known to change constantly
     find_command = [
         'sudo', 'find', '/',
         '-mount', 
@@ -158,129 +249,95 @@ def scan_latest_files(days=1):
         '-type', 'f',
         '-print'
     ]
-    
     try:
         output = subprocess.check_output(find_command, timeout=120, stderr=subprocess.PIPE).decode('utf-8')
         files = output.strip().split('\n')
         return [f for f in files if f.strip()]
-    except subprocess.CalledProcessError as e:
-        app.logger.error(f"Error during find command: {e.stderr.decode()}")
-        raise ServiceActionError(f"Error executing file scan command.")
-    except subprocess.TimeoutExpired:
-        raise ServiceActionError("File scan timed out (too many files to check).")
     except Exception as e:
         raise ServiceActionError(f"File scan failed: {e}")
 
 def manage_systemd_service(service_name, action):
-    """Performs an action (status/start/stop/restart) on a systemd service."""
     if platform.system() != "Linux":
-        raise UnsupportedOSError("Service management is only supported on Linux (using systemd).")
-
+        raise UnsupportedOSError("Linux only.")
     allowed_actions = ['status', 'start', 'stop', 'restart']
     if action not in allowed_actions:
         raise ServiceActionError(f"Invalid action: {action}")
-
     command = ['sudo', 'systemctl', action, service_name]
-    
     try:
-        # Check=True is used for non-status actions to raise error if start/stop fails
         result = subprocess.run(command, capture_output=True, text=True, check=(action != 'status'), timeout=10)
-        
         if action == 'status':
             status_summary = [line for line in result.stdout.split('\n') if 'Active:' in line or 'Loaded:' in line]
             return {"status": "success", "summary": "\n".join(status_summary), "full_output": result.stdout}
-        
-        return {"status": "success", "message": f"Service '{service_name}' successfully executed action '{action}'."}
-
-    except subprocess.CalledProcessError as e:
-        error_output = e.stderr.strip()
-        if "not found" in error_output or "no such service" in error_output:
-            raise ServiceActionError(f"Service '{service_name}' not found.")
-        raise ServiceActionError(f"Failed to execute action '{action}' on service '{service_name}': {error_output}")
-    except subprocess.TimeoutExpired:
-        raise ServiceActionError(f"Action '{action}' timed out for service '{service_name}'.")
+        return {"status": "success", "message": f"Service '{service_name}' -> '{action}' OK."}
     except Exception as e:
-        raise ServiceActionError(f"Unexpected error during service management: {e}")
+        raise ServiceActionError(f"Error: {e}")
 
 # --- Flask Routes ---
 
 @app.route('/', methods=['GET'])
 @requires_auth 
 def index():
-    """Route for the main scanning interface."""
-    app.logger.info("Rendering index.html template.")
     return render_template('index.html', api_port=LISTEN_PORT)
+
+@app.route('/api/server/details', methods=['GET'])
+@requires_auth
+def handle_server_details():
+    """Endpoint for full server stats."""
+    try:
+        details = get_system_details()
+        return jsonify(details)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/security/deep', methods=['GET'])
+@requires_auth
+def handle_deep_security():
+    """Endpoint for Firewall and Auth Logs."""
+    try:
+        firewall = get_firewall_status()
+        auth_logs = get_auth_logs()
+        return jsonify({"firewall": firewall, "auth_logs": auth_logs})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/scan/external', methods=['POST'])
 @requires_auth 
 def handle_external_scan():
-    """Endpoint for full external scan (Port 1-65535, Service, Security)."""
     target = request.json.get('target')
-    if not target:
-        return jsonify({"error": "Target IP/Domain is required"}), 400
-    
-    app.logger.info(f"Full external scan request for target: {target}")
-
+    if not target: return jsonify({"error": "Target Required"}), 400
     try:
         results = run_nmap_full_scan(target) 
         return jsonify(results)
-    except NmapNotInstalledError as e:
-        return jsonify({"error": str(e), "suggestion": "Ensure Nmap is installed."}), 500
     except Exception as e:
-        app.logger.error(f"External scan failed for {target}: {e}")
-        return jsonify({"error": "Failed to complete external scan.", "details": str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/scan/internal', methods=['GET'])
 @requires_auth 
 def handle_internal_scan():
-    """Endpoint for local security checks (Users, Processes, Crypto-mining)."""
-    app.logger.info("Internal security check request received.")
     try:
         results = check_local_security_and_user()
         return jsonify(results)
     except Exception as e:
-        app.logger.error(f"Internal check failed: {e}")
-        return jsonify({"error": "Failed to complete internal checks.", "details": str(e)}), 500
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/api/manage/service', methods=['POST'])
 @requires_auth 
 def handle_service_management():
-    """Endpoint for managing systemd services (start, stop, restart, status)."""
     data = request.json
-    service_name = data.get('service')
-    action = data.get('action')
-
-    if not service_name or not action:
-        return jsonify({"error": "Service name and action are required."}), 400
-
     try:
-        result = manage_systemd_service(service_name, action)
+        result = manage_systemd_service(data.get('service'), data.get('action'))
         return jsonify(result)
-    except UnsupportedOSError as e:
-        return jsonify({"error": str(e)}), 400
-    except ServiceActionError as e:
-        return jsonify({"status": "failed", "error": str(e)}), 500
     except Exception as e:
-        app.logger.error(f"Unhandled error in service management: {e}")
-        return jsonify({"status": "failed", "error": "An unexpected error occurred."}), 500
+        return jsonify({"status": "failed", "error": str(e)}), 500
 
 @app.route('/api/scan/latest_files', methods=['POST'])
 @requires_auth 
 def handle_latest_files_scan():
-    """Endpoint for scanning recently modified files."""
-    days = request.json.get('days', 1) 
-
     try:
-        files = scan_latest_files(days)
-        return jsonify({"status": "success", "days": days, "file_count": len(files), "files": files})
-    except UnsupportedOSError as e:
-        return jsonify({"error": str(e)}), 400
-    except ServiceActionError as e:
-        return jsonify({"status": "failed", "error": str(e)}), 500
+        files = scan_latest_files(request.json.get('days', 1))
+        return jsonify({"status": "success", "file_count": len(files), "files": files})
     except Exception as e:
-        app.logger.error(f"Unhandled error in latest file scan: {e}")
-        return jsonify({"status": "failed", "error": "An unexpected error occurred."}), 500
-
+        return jsonify({"status": "failed", "error": str(e)}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=LISTEN_PORT, debug=False)
