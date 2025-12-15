@@ -19,7 +19,10 @@ USERNAME = 'root'
 PASSWORD = 'BossHubRoot' 
 LISTEN_PORT = 8989
 
-# --- Signatures ---
+# --- Constants & Signatures ---
+# Marker เอาไว้ระบุว่าไฟล์นี้ถูกเราจัดการแล้ว
+LOCK_MARKER = "[BOSSHUB-SECURE-LOCK]"
+
 MALWARE_SIGNATURES = {
     r'eval\s*\(': 'PHP Web Shell execution',
     r'base64_decode\s*\(': 'Obfuscated Code (Base64)',
@@ -68,7 +71,7 @@ def get_system_details():
                 partitions.append({"mount": p.mountpoint, "total": get_size(u.total), "percent": u.percent})
             except: pass
     except: pass
-
+    
     net_info = {}
     try:
         for name, addrs in psutil.net_if_addrs().items():
@@ -121,64 +124,147 @@ def scan_hosting_files(path_root='/home'):
         for root, dirs, files in os.walk(path_root):
             if 'logs' in root or 'mail' in root: continue
             for file in files:
-                if any(file.endswith(x) for x in ['.php', '.py', '.sh', '.pl']):
+                # Check normal suspicious files OR files we already renamed (.quarantined)
+                if any(file.endswith(x) for x in ['.php', '.py', '.sh', '.pl', '.quarantined']):
                     fpath = os.path.join(root, file)
                     count += 1
                     try:
                         with open(fpath, 'r', errors='ignore') as f:
                             content = f.read(50000)
+                            
+                            # Check if ALREADY FIXED by us
+                            if LOCK_MARKER in content or file.endswith('.quarantined'):
+                                infected.append({
+                                    "path": fpath, 
+                                    "threats": ["ถูกระงับการทำงานแล้ว (Quarantined)"], 
+                                    "status": "quarantined"
+                                })
+                                continue
+
+                            # Check for Malware Signatures
                             found = [desc for sig, desc in MALWARE_SIGNATURES.items() if re.search(sig, content, re.IGNORECASE)]
-                            if found: infected.append({"path": fpath, "threats": found})
+                            if found: 
+                                infected.append({
+                                    "path": fpath, 
+                                    "threats": found, 
+                                    "status": "active"
+                                })
                     except: pass
             if count > 3000: break
     except Exception as e: return {"error": str(e)}
     return {"scanned": count, "infected": infected}
 
-# --- 3. Quarantine / Fix Logic (New!) ---
-def quarantine_file(file_path):
+# --- 3. Quarantine & Restore Logic (Enhanced) ---
+
+def manage_file_security(file_path, action):
+    """
+    Action: 'fix' (Disable/Quarantine) or 'restore' (Enable/Undo)
+    """
     if not os.path.exists(file_path):
-        return {"status": "error", "message": "File not found"}
+        return {"status": "error", "message": "ไม่พบไฟล์ดังกล่าว"}
     
+    if not os.access(file_path, os.W_OK):
+        return {"status": "error", "message": "ไม่มีสิทธิ์เขียนไฟล์ (Permission Denied)"}
+
     try:
-        # Check permission
-        if not os.access(file_path, os.W_OK):
-            return {"status": "error", "message": "Permission denied. Run as root?"}
+        # --- RESTORE LOGIC ---
+        if action == 'restore':
+            if file_path.endswith('.quarantined'):
+                # Restore: Rename back
+                new_path = file_path.replace('.quarantined', '')
+                os.rename(file_path, new_path)
+                return {"status": "success", "message": f"คืนค่าชื่อไฟล์เป็น {os.path.basename(new_path)} แล้ว"}
+            
+            # Read content to restore
+            with open(file_path, 'r', errors='ignore') as f:
+                content = f.read()
 
-        file_ext = os.path.splitext(file_path)[1].lower()
+            if LOCK_MARKER not in content:
+                return {"status": "error", "message": "ไฟล์นี้ไม่ได้ถูกล็อคโดยระบบ หรือถูกแก้ไขไปแล้ว"}
+
+            file_ext = os.path.splitext(file_path)[1].lower()
+            new_content = content
+            
+            if file_ext == '.php':
+                # Remove /* MARKER ... */ wrapper
+                # Regex to find the wrapper and extract inner content
+                pattern = re.escape(f"/* {LOCK_MARKER}") + r".*?\*/\s*(.*)"
+                match = re.search(pattern, content, re.DOTALL)
+                if match:
+                    # Fallback: Just remove our header/footer manually to be safe
+                    # Simple approach: Remove lines containing the marker and the closing */
+                    lines = content.split('\n')
+                    # Assuming we wrap: /* MARKER ... \n OLD_CODE \n */
+                    # We strip first 3 lines and last 1 line (approx) or use logic
+                    # Let's use string replace for exact match if possible, or robust parsing
+                    
+                    # Robust Restore for PHP:
+                    # Remove start tag
+                    content = content.replace(f"/* {LOCK_MARKER} - ระงับการใช้งานโดย BossHub Security */\n", "")
+                    # Remove end tag
+                    content = content.replace("\n/* END_LOCK */", "")
+                    new_content = content
+                
+            elif file_ext in ['.py', '.sh', '.pl']:
+                # Remove # MARKER line and uncomment others
+                lines = content.split('\n')
+                if LOCK_MARKER in lines[0]:
+                    cleaned_lines = []
+                    for line in lines[1:]: # Skip header
+                        if line.startswith("# "): 
+                            cleaned_lines.append(line[2:]) # Remove '# '
+                        else:
+                            cleaned_lines.append(line)
+                    new_content = "\n".join(cleaned_lines)
+
+            with open(file_path, 'w') as f:
+                f.write(new_content)
+            return {"status": "success", "message": "คืนค่าเนื้อหาไฟล์เรียบร้อยแล้ว"}
+
+        # --- FIX / QUARANTINE LOGIC ---
+        elif action == 'fix':
+            file_ext = os.path.splitext(file_path)[1].lower()
+            
+            with open(file_path, 'r', errors='ignore') as f:
+                content = f.read()
+            
+            # Prevent double locking
+            if LOCK_MARKER in content:
+                return {"status": "warning", "message": "ไฟล์นี้ถูกระงับการใช้งานอยู่แล้ว"}
+
+            if file_ext == '.php':
+                # PHP: Wrap in comments
+                header = f"/* {LOCK_MARKER} - ระงับการใช้งานโดย BossHub Security */\n"
+                footer = "\n/* END_LOCK */"
+                new_content = header + content + footer
+                with open(file_path, 'w') as f:
+                    f.write(new_content)
+                return {"status": "success", "message": "ปิดการทำงานไฟล์ PHP เรียบร้อย (Commented)"}
+
+            elif file_ext in ['.py', '.sh', '.pl']:
+                # Script: Comment every line
+                lines = content.split('\n')
+                new_lines = [f"# {line}" for line in lines]
+                header = f"# {LOCK_MARKER} - ระงับการใช้งานโดย BossHub Security\n"
+                new_content = header + "\n".join(new_lines)
+                with open(file_path, 'w') as f:
+                    f.write(new_content)
+                return {"status": "success", "message": "ปิดการทำงานสคริปต์เรียบร้อย (# Commented)"}
+
+            else:
+                # Binary/Other: Rename
+                new_path = file_path + ".quarantined"
+                os.rename(file_path, new_path)
+                return {"status": "success", "message": f"เปลี่ยนชื่อไฟล์เป็น {os.path.basename(new_path)}"}
         
-        # Read original content
-        with open(file_path, 'r', errors='ignore') as f:
-            content = f.read()
-
-        # Logic Update based on File Type
-        if file_ext == '.php':
-            # PHP: Wrap in /* */
-            # Note: We wrap strictly to stop execution.
-            new_content = f"/* \n[BOSSHUB QUARANTINE - {datetime.datetime.now()}]\n\n{content}\n\n*/"
-            with open(file_path, 'w') as f:
-                f.write(new_content)
-            return {"status": "success", "message": "PHP File Commented Out (/* */)"}
-
-        elif file_ext in ['.py', '.sh', '.pl']:
-            # Python/Shell: Comment with #
-            lines = content.split('\n')
-            new_lines = [f"# {line}" for line in lines]
-            new_content = f"# [BOSSHUB QUARANTINE - {datetime.datetime.now()}]\n" + "\n".join(new_lines)
-            with open(file_path, 'w') as f:
-                f.write(new_content)
-            return {"status": "success", "message": f"Script Commented Out (#)"}
-
         else:
-            # Others: Rename to .quarantined
-            new_path = file_path + ".quarantined"
-            os.rename(file_path, new_path)
-            return {"status": "success", "message": f"File renamed to {os.path.basename(new_path)}"}
+            return {"status": "error", "message": "คำสั่งไม่ถูกต้อง"}
 
     except Exception as e:
-        app.logger.error(f"Quarantine error: {e}")
+        app.logger.error(f"File Manage Error: {e}")
         return {"status": "error", "message": str(e)}
 
-# --- 4. Tools ---
+# --- 4. Tools & Others ---
 def run_nmap(target):
     try:
         nm = nmap.PortScanner()
@@ -222,11 +308,12 @@ def api_threat_net(): return jsonify(analyze_network_threats())
 @requires_auth
 def api_threat_malware(): return jsonify(scan_hosting_files(request.args.get('path', '/home')))
 
-# New Route for Fixing Files
-@app.route('/api/threats/fix', methods=['POST'])
+# รวม Route Fix/Restore ไว้ที่เดียว
+@app.route('/api/threats/manage_file', methods=['POST'])
 @requires_auth
-def api_threat_fix():
-    return jsonify(quarantine_file(request.json.get('path')))
+def api_manage_file():
+    data = request.json
+    return jsonify(manage_file_security(data.get('path'), data.get('action')))
 
 @app.route('/api/tools/nmap', methods=['POST'])
 @requires_auth
