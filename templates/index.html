@@ -3,21 +3,37 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BossHub Ultimate Guardian (Pro)</title>
+    <title>BossHub Ultimate Guardian (TH)</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     <style>
-        body { background-color: #0d0d0d; color: #f0f0f0; font-family: 'Sarabun', sans-serif; }
-        .card { background-color: #1a1a1a; border: 1px solid #333; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
-        .card-header { font-weight: bold; text-transform: uppercase; letter-spacing: 1px; }
-        .text-muted { color: #aaaaaa !important; }
-        .stat-val { font-size: 1.8rem; font-weight: bold; color: #00ff41; text-shadow: 0 0 5px rgba(0, 255, 65, 0.3); }
-        .nav-tabs .nav-link { color: #888; border: none; }
-        .nav-tabs .nav-link.active { background-color: transparent; color: #00ff41; border-bottom: 2px solid #00ff41; font-weight: bold; }
-        .table-dark { --bs-table-bg: #1a1a1a; color: #fff; }
-        pre { background: #000; color: #0f0; padding: 15px; border-radius: 5px; border: 1px solid #444; }
-        .text-neon { color: #00ff41; }
-        .code-snippet { font-family: 'Courier New', monospace; font-size: 0.85em; background-color: #222; padding: 5px; border-left: 3px solid #dc3545; color: #ffb3b3; display: block; margin-top: 5px; }
+        body { background-color: #000; color: #f0f0f0; font-family: 'Sarabun', sans-serif; }
+        
+        /* UI Style */
+        .card { background-color: #111; border: 1px solid #333; margin-bottom: 20px; box-shadow: 0 0 10px rgba(0, 255, 65, 0.1); }
+        .card-header { font-weight: bold; text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid #333; }
+        .text-muted { color: #888 !important; }
+        
+        /* Neon Effect */
+        .text-neon { color: #00ff41; text-shadow: 0 0 5px rgba(0, 255, 65, 0.5); }
+        .stat-val { font-size: 2rem; font-weight: bold; color: #00ff41; }
+        
+        /* Tabs */
+        .nav-tabs { border-bottom: 1px solid #333; }
+        .nav-tabs .nav-link { color: #666; border: none; }
+        .nav-tabs .nav-link.active { background-color: transparent; color: #00ff41; border-bottom: 3px solid #00ff41; font-weight: bold; }
+        
+        /* Tables & Pre */
+        .table-dark { --bs-table-bg: #111; color: #ddd; border-color: #333; }
+        pre { background: #0a0a0a; color: #0f0; padding: 15px; border: 1px solid #333; border-radius: 4px; }
+        
+        /* Code Snippet Box */
+        .code-snippet { 
+            font-family: 'Courier New', monospace; font-size: 0.85em; 
+            background-color: #1a1a1a; padding: 8px; 
+            border-left: 3px solid #dc3545; color: #ff9999; 
+            display: block; margin-top: 5px; word-break: break-all;
+        }
     </style>
 </head>
 <body>
@@ -25,7 +41,7 @@
 <nav class="navbar navbar-dark bg-black border-bottom border-success mb-3">
     <div class="container">
         <span class="navbar-brand text-neon"><i class="bi bi-shield-check"></i> BossHub Ultimate Guardian</span>
-        <span class="text-white small">Root | Port 8989</span>
+        <span class="text-white small">Status: Active</span>
     </div>
 </nav>
 
@@ -46,31 +62,41 @@
                 <div class="col-6 col-md-3"><div class="card p-3"><span class="text-muted">OS</span><div id="osVal" class="h5 text-white">-</div></div></div>
             </div>
             <div class="row">
-                <div class="col-md-6"><div class="card h-100"><div class="card-header bg-dark text-success border-success">Network & Disk</div><div class="card-body" id="diskNetBody">Loading...</div></div></div>
-                <div class="col-md-6"><div class="card h-100"><div class="card-header bg-dark text-danger border-danger">Security Alerts</div><div class="card-body"><h6>Firewall Status:</h6><pre id="firewallOut" class="p-2">-</pre><h6>Last 5 Logins:</h6><ul class="list-group list-group-flush small" id="logList"></ul></div></div></div>
+                <div class="col-md-6"><div class="card h-100"><div class="card-header bg-dark text-success">สถานะดิสก์ & เครือข่าย</div><div class="card-body" id="diskNetBody">Loading...</div></div></div>
+                <div class="col-md-6"><div class="card h-100"><div class="card-header bg-dark text-danger">ความปลอดภัย & Firewall</div><div class="card-body"><h6>Firewall Status:</h6><pre id="firewallOut" class="p-2 mb-2">-</pre><h6>Last Logins:</h6><ul class="list-group list-group-flush small" id="logList"></ul></div></div></div>
             </div>
         </div>
 
         <div class="tab-pane fade" id="threats">
+            
             <div class="card border-warning">
-                <div class="card-header text-warning bg-dark"><i class="bi bi-router"></i> Network Process Killer</div>
+                <div class="card-header text-warning bg-dark"><i class="bi bi-activity"></i> 1. Network & Active Miners (Process)</div>
                 <div class="card-body">
-                    <button class="btn btn-warning btn-sm mb-2" onclick="scanNetwork()">Scan Connections</button>
+                    <button class="btn btn-warning btn-sm mb-2" onclick="scanNetwork()">สแกนการเชื่อมต่อและ Process ขุด</button>
                     <div class="table-responsive">
-                        <table class="table table-dark table-sm table-striped">
+                        <table class="table table-dark table-sm table-hover">
                             <thead><tr><th>PID</th><th>Process</th><th>Remote IP</th><th>Risk</th><th>Action</th></tr></thead>
-                            <tbody id="netThreatBody"><tr><td colspan="5">Ready to scan...</td></tr></tbody>
+                            <tbody id="netThreatBody"><tr><td colspan="5" class="text-muted">รอคำสั่งสแกน...</td></tr></tbody>
                         </table>
                     </div>
                 </div>
             </div>
-            <div class="card border-danger mt-3">
-                <div class="card-header text-danger bg-dark"><i class="bi bi-bug"></i> Smart Malware Scanner</div>
+
+            <div class="card border-info mt-3">
+                <div class="card-header text-info bg-dark"><i class="bi bi-hdd-network"></i> 2. Deep Miner Hunt (Files & Services)</div>
                 <div class="card-body">
-                    <p class="small text-muted mb-2">สแกนหาไฟล์อันตราย (กรอง Base64 มั่วๆ ออกแล้ว) และแสดงโค้ดส่วนที่มีปัญหา</p>
+                    <p class="small text-muted">ค้นหาไฟล์ Binary, Config ขุดบิทคอยน์ที่ซ่อนอยู่ และ Systemd Service ที่น่าสงสัย</p>
+                    <button class="btn btn-info btn-sm mb-2" onclick="scanMiners()">ค้นหา Miner ที่ซ่อนอยู่</button>
+                    <div id="minerResult"></div>
+                </div>
+            </div>
+
+            <div class="card border-danger mt-3">
+                <div class="card-header text-danger bg-dark"><i class="bi bi-bug"></i> 3. Smart Web Shell Scanner</div>
+                <div class="card-body">
                     <div class="input-group mb-2">
-                        <input type="text" class="form-control bg-dark text-light" id="malwarePath" value="/home">
-                        <button class="btn btn-danger" onclick="scanMalware()">Deep Scan</button>
+                        <input type="text" class="form-control bg-dark text-light border-secondary" id="malwarePath" value="/home">
+                        <button class="btn btn-danger" onclick="scanMalware()">เริ่มสแกน</button>
                     </div>
                     <div id="malwareResult"></div>
                 </div>
@@ -79,10 +105,10 @@
 
         <div class="tab-pane fade" id="tools">
             <div class="row">
-                <div class="col-md-6"><div class="card"><div class="card-header">Nmap Scanner</div><div class="card-body"><input type="text" class="form-control mb-2" id="nmapTarget" placeholder="IP Address"><button class="btn btn-primary btn-sm" onclick="runNmap()">Scan Port 1-1000</button><pre id="nmapOut" class="mt-2 text-white">Result...</pre></div></div></div>
-                <div class="col-md-6"><div class="card"><div class="card-header">Maintenance</div><div class="card-body"><h6>Service Control:</h6><div class="input-group mb-3"><input type="text" class="form-control" id="srvName" placeholder="Service Name"><button class="btn btn-success" onclick="srvAction('start')">Start</button><button class="btn btn-danger" onclick="srvAction('stop')">Stop</button></div><button class="btn btn-outline-warning w-100" onclick="clearTemp()">🧹 Clean /tmp</button><pre id="srvOut" class="mt-2 text-white"></pre></div></div></div>
+                <div class="col-md-6"><div class="card"><div class="card-header">Nmap Port Scanner</div><div class="card-body"><input type="text" class="form-control mb-2" id="nmapTarget" placeholder="IP Address"><button class="btn btn-primary btn-sm" onclick="runNmap()">Scan (1-1000)</button><pre id="nmapOut" class="mt-2 text-white">Result...</pre></div></div></div>
+                <div class="col-md-6"><div class="card"><div class="card-header">Maintenance</div><div class="card-body"><h6>จัดการ Service:</h6><div class="input-group mb-3"><input type="text" class="form-control" id="srvName" placeholder="Service Name"><button class="btn btn-success" onclick="srvAction('start')">Start</button><button class="btn btn-danger" onclick="srvAction('stop')">Stop</button></div><button class="btn btn-outline-warning w-100" onclick="clearTemp()">🧹 ล้างไฟล์ขยะ /tmp (กำจัด Miner แฝง)</button><pre id="srvOut" class="mt-2 text-white"></pre></div></div></div>
             </div>
-            <div class="card"><div class="card-header">Recent Modified Files (24h)</div><div class="card-body"><button class="btn btn-info btn-sm" onclick="scanFiles()">Find Files</button><pre id="filesOut" class="mt-2 text-white"></pre></div></div>
+            <div class="card"><div class="card-header">ไฟล์ที่มีการแก้ไขล่าสุด (24 ชม.)</div><div class="card-body"><button class="btn btn-secondary btn-sm" onclick="scanFiles()">ค้นหาไฟล์</button><pre id="filesOut" class="mt-2 text-white"></pre></div></div>
         </div>
     </div>
 </div>
@@ -109,46 +135,44 @@
     }
 
     async function scanNetwork() {
-        const t = document.getElementById('netThreatBody'); t.innerHTML = '<tr><td colspan="5">Scanning...</td></tr>';
+        const t = document.getElementById('netThreatBody'); t.innerHTML = '<tr><td colspan="5">กำลังสแกน...</td></tr>';
         const res = await get('/threats/network');
-        if(res.length === 0) return t.innerHTML = '<tr><td colspan="5" class="text-success">No active threats.</td></tr>';
+        if(res.length === 0) return t.innerHTML = '<tr><td colspan="5" class="text-success">ไม่พบ Process อันตราย</td></tr>';
         t.innerHTML = '';
         res.forEach(r => {
             const btn = `<button class="btn btn-danger btn-sm" onclick="killProc(${r.pid})">KILL</button>`;
             t.innerHTML += `<tr><td>${r.pid}</td><td>${r.name}</td><td>${r.raddr}</td><td class="text-warning">${r.risk}</td><td>${btn}</td></tr>`;
         });
     }
-    async function killProc(pid) { if(confirm(`Kill Process ${pid}?`)) { const res = await post('/threats/kill_process', {pid}); alert(res.message); scanNetwork(); } }
-    async function clearTemp() { if(confirm('Clean /tmp?')) { const res = await post('/tools/clear_temp', {}); alert(res.message); } }
+
+    async function scanMiners() {
+        const div = document.getElementById('minerResult'); div.innerHTML = '<div class="spinner-border text-info spinner-border-sm"></div> กำลังค้นหาไฟล์ Miner...';
+        const res = await get('/threats/miners');
+        if(res.length === 0) return div.innerHTML = '<div class="alert alert-success mt-2">ไม่พบไฟล์หรือ Service ของ Miner</div>';
+        let h = '';
+        res.forEach(r => {
+            h += `<div class="alert alert-dark border-info mt-2"><strong>${r.type}:</strong> ${r.path}<br><small class="text-info">${r.detail}</small></div>`;
+        });
+        div.innerHTML = h;
+    }
 
     async function scanMalware() {
-        const div = document.getElementById('malwareResult');
-        div.innerHTML = '<div class="spinner-border text-danger spinner-border-sm"></div> Scanning...';
+        const div = document.getElementById('malwareResult'); div.innerHTML = '<div class="spinner-border text-danger spinner-border-sm"></div> กำลังสแกน...';
         const res = await get('/threats/malware?path=' + document.getElementById('malwarePath').value);
-        let h = `<p class="mt-2">Scanned: ${res.scanned} | Found: <span class="badge bg-danger">${res.infected.length}</span></p>`;
+        let h = `<p class="mt-2 text-muted">สแกน: ${res.scanned} | เจอ: <span class="badge bg-danger">${res.infected.length}</span></p>`;
         res.infected.forEach(f => {
             const isQ = f.status === 'quarantined';
             const btn = isQ ? `<button class="btn btn-success btn-sm ms-2" onclick="manageFile('${f.path}','restore')">Restore</button>` 
-                            : `<button class="btn btn-warning btn-sm ms-2" onclick="manageFile('${f.path}','fix')">Block</button>`;
-            
-            // Show snippet if active threat
+                            : `<button class="btn btn-warning btn-sm ms-2" onclick="manageFile('${f.path}','fix')">Block/Fix</button>`;
             const snippetHtml = (!isQ && f.snippet && f.snippet !== 'N/A') ? `<span class="code-snippet">${f.snippet}</span>` : '';
-
-            h += `<div class="alert alert-dark border-${isQ?'success':'danger'} py-2">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <div>
-                            <strong class="${isQ?'text-success':'text-danger'}">${f.path}</strong><br>
-                            <small class="text-white">${f.threats.join(', ')}</small>
-                        </div>
-                        ${btn}
-                    </div>
-                    ${snippetHtml}
-                  </div>`;
+            h += `<div class="alert alert-dark border-${isQ?'success':'danger'} py-2"><div class="d-flex justify-content-between align-items-center"><div><strong class="${isQ?'text-success':'text-danger'}">${f.path}</strong><br><small class="text-white">${f.threats.join(', ')}</small></div>${btn}</div>${snippetHtml}</div>`;
         });
-        div.innerHTML = h || '<div class="alert alert-success">No Malware Found</div>';
+        div.innerHTML = h || '<div class="alert alert-success mt-2">ระบบปลอดภัย ไม่พบไฟล์อันตราย</div>';
     }
 
-    async function manageFile(p, a) { if(confirm(a==='fix'?'Block file?':'Restore file?')) { const res = await post('/threats/manage_file', {path:p, action:a}); alert(res.message); scanMalware(); } }
+    async function killProc(pid) { if(confirm(`ต้องการ Kill Process ${pid}?`)) { const res = await post('/threats/kill_process', {pid}); alert(res.message); scanNetwork(); } }
+    async function clearTemp() { if(confirm('ต้องการล้างไฟล์ใน /tmp ทั้งหมด?')) { const res = await post('/tools/clear_temp', {}); alert(res.message); } }
+    async function manageFile(p, a) { if(confirm(a==='fix'?'ปิดการทำงานไฟล์นี้?':'คืนค่าไฟล์นี้?')) { const res = await post('/threats/manage_file', {path:p, action:a}); alert(res.message); scanMalware(); } }
     async function runNmap() { document.getElementById('nmapOut').innerText = 'Scanning...'; const res = await post('/tools/nmap', {target: document.getElementById('nmapTarget').value}); let txt = `Status: ${res.status}\n`; res.ports.forEach(p => txt += `Port ${p.port}: ${p.state} (${p.service})\n`); document.getElementById('nmapOut').innerText = txt; }
     async function srvAction(act) { document.getElementById('srvOut').innerText = 'Executing...'; const res = await post('/tools/service', {service: document.getElementById('srvName').value, action: act}); document.getElementById('srvOut').innerText = res.output || res.error || 'Done'; }
     async function scanFiles() { document.getElementById('filesOut').innerText = 'Finding...'; const res = await post('/tools/files', {days: 1}); document.getElementById('filesOut').innerText = res.files.join('\n') || 'No recent files'; }
