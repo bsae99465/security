@@ -3,105 +3,109 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BossHub Ultimate Server Manager</title>
+    <title>BossHub Threat Hunter</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
     <style>
-        body { background-color: #f0f2f5; font-family: 'Sarabun', sans-serif; }
-        .dashboard-card { border: none; box-shadow: 0 2px 4px rgba(0,0,0,0.1); transition: transform 0.2s; }
-        .dashboard-card:hover { transform: translateY(-5px); }
-        .status-badge { font-size: 0.9em; }
-        pre { background: #2d3436; color: #dfe6e9; padding: 10px; border-radius: 6px; font-size: 0.8rem; }
-        .section-title { border-left: 5px solid #0d6efd; padding-left: 10px; margin-bottom: 20px; font-weight: bold; }
+        body { background-color: #1a1d20; color: #e0e0e0; font-family: 'Courier New', Courier, monospace; }
+        .card { background-color: #2c3034; border: 1px solid #495057; }
+        .card-header { background-color: #212529; border-bottom: 1px solid #495057; font-weight: bold; }
+        .text-neon-green { color: #00ff41; }
+        .text-neon-red { color: #ff3838; }
+        .table-dark { --bs-table-bg: #2c3034; }
+        pre { background: #000; color: #0f0; padding: 10px; border-radius: 5px; border: 1px solid #333; }
+        .badge-danger-glow { background-color: #dc3545; box-shadow: 0 0 10px #dc3545; }
     </style>
 </head>
-<body onload="initDashboard()">
+<body>
 
-<nav class="navbar navbar-dark bg-dark mb-4">
-    <div class="container">
-        <span class="navbar-brand mb-0 h1"><i class="bi bi-shield-lock-fill"></i> BossHub Server Manager V2.0</span>
-        <span class="text-white small">Running on Port 8989 | root:BossHubRoot</span>
+<nav class="navbar navbar-dark bg-black border-bottom border-secondary mb-4">
+    <div class="container-fluid">
+        <span class="navbar-brand mb-0 h1 text-neon-green">
+            <i class="bi bi-radioactive"></i> BossHub Threat Hunter & Server Guard
+        </span>
+        <span class="text-white small">System: <span id="sysInfo">Loading...</span></span>
     </div>
 </nav>
 
-<div class="container mb-5">
+<div class="container-fluid px-4">
     
-    <h5 class="section-title">📊 System Overview & Health</h5>
-    <div class="row g-3 mb-4" id="serverStats">
-        <div class="col-md-12 text-center"><div class="spinner-border text-primary"></div> กำลังโหลดข้อมูลเซิร์ฟเวอร์...</div>
-    </div>
-
-    <div class="row g-3 mb-4">
-        <div class="col-md-6">
-            <div class="card h-100 shadow-sm">
-                <div class="card-header bg-danger text-white"><i class="bi bi-bricks"></i> Firewall Status (UFW)</div>
-                <div class="card-body">
-                    <pre id="firewallOutput">Checking...</pre>
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card shadow">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span><i class="bi bi-activity"></i> Active Network Threats & Mining Connections</span>
+                    <button class="btn btn-sm btn-outline-danger" onclick="scanNetwork()">
+                        <i class="bi bi-arrow-repeat"></i> Scan Connections
+                    </button>
                 </div>
-            </div>
-        </div>
-        <div class="col-md-6">
-            <div class="card h-100 shadow-sm">
-                <div class="card-header bg-warning text-dark"><i class="bi bi-clock-history"></i> Last Login History</div>
-                <div class="card-body" style="max-height: 200px; overflow-y: auto;">
-                    <ul class="list-group list-group-flush" id="loginHistory">
-                        <li class="list-group-item">Loading...</li>
-                    </ul>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <h5 class="section-title">🛠️ Security Tools</h5>
-    <div class="row">
-        <div class="col-lg-8">
-            <div class="card shadow-sm mb-3">
                 <div class="card-body">
-                    <h6 class="card-title"><i class="bi bi-globe"></i> Full External Port Scan (1-65535)</h6>
-                    <form id="scanForm" class="d-flex gap-2">
-                        <input type="text" class="form-control" id="targetInput" placeholder="IP หรือ Domain" required>
-                        <button class="btn btn-primary" type="submit" id="scanBtn">Scan</button>
-                    </form>
-                    <div id="scanResults" class="mt-3"></div>
-                </div>
-            </div>
-        </div>
-
-        <div class="col-lg-4">
-            <div class="card shadow-sm mb-3">
-                <div class="card-body">
-                    <h6 class="card-title"><i class="bi bi-cpu"></i> Internal Process Check</h6>
-                    <button class="btn btn-outline-danger w-100 mb-2" onclick="runInternalCheck()">Check Miners & Users</button>
-                    <div id="internalResults" class="small mt-2"></div>
-                </div>
-            </div>
-            
-            <div class="card shadow-sm">
-                <div class="card-body">
-                    <h6 class="card-title"><i class="bi bi-hdd-network"></i> Service Manager</h6>
-                    <div class="input-group input-group-sm mb-2">
-                        <input type="text" class="form-control" id="serviceNameInput" placeholder="Service Name">
+                    <div id="networkAlert" class="alert alert-dark d-none"></div>
+                    <div class="table-responsive">
+                        <table class="table table-dark table-hover table-sm small">
+                            <thead>
+                                <tr class="text-secondary">
+                                    <th>PID/Program</th>
+                                    <th>Local Address</th>
+                                    <th>Remote Address (Destination)</th>
+                                    <th>Status</th>
+                                    <th>Risk Level</th>
+                                    <th>Threat Details</th>
+                                </tr>
+                            </thead>
+                            <tbody id="networkTableBody">
+                                <tr><td colspan="6" class="text-center text-muted">Click "Scan Connections" to start...</td></tr>
+                            </tbody>
+                        </table>
                     </div>
-                    <div class="btn-group w-100 btn-group-sm">
-                        <button class="btn btn-outline-secondary" onclick="manageService('status')">Status</button>
-                        <button class="btn btn-outline-success" onclick="manageService('start')">Start</button>
-                        <button class="btn btn-outline-danger" onclick="manageService('stop')">Stop</button>
-                    </div>
-                    <div id="serviceResult" class="mt-2 small"></div>
                 </div>
             </div>
         </div>
     </div>
-    
-    <div class="card shadow-sm mt-3">
-        <div class="card-body">
-            <h6><i class="bi bi-file-earmark-code"></i> สแกนไฟล์ที่ถูกแก้ไขล่าสุด (Anti-Backdoor)</h6>
-            <div class="input-group input-group-sm w-50">
-                <input type="number" class="form-control" id="daysInput" value="1" min="1">
-                <span class="input-group-text">วัน</span>
-                <button class="btn btn-secondary" onclick="scanLatestFiles()">เริ่มสแกน</button>
+
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card shadow border-danger">
+                <div class="card-header text-danger">
+                    <i class="bi bi-bug-fill"></i> HestiaCP/VestaCP Web Shell & Injection Scanner
+                </div>
+                <div class="card-body">
+                    <p class="small text-muted">
+                        ระบบจะสแกนหาไฟล์ .php, .py, .sh ในโฟลเดอร์ <code>/home</code> เพื่อหาคำสั่งอันตราย เช่น 
+                        <code>eval()</code>, <code>base64_decode</code>, <code>xmrig</code>
+                    </p>
+                    <div class="input-group mb-3">
+                        <span class="input-group-text bg-dark text-light border-secondary">Path to Scan</span>
+                        <input type="text" class="form-control bg-dark text-light border-secondary" id="scanPath" value="/home">
+                        <button class="btn btn-danger" onclick="scanHosting()">
+                            <i class="bi bi-search"></i> Start Deep Scan
+                        </button>
+                    </div>
+
+                    <div id="malwareProgress" class="d-none text-center py-3">
+                        <div class="spinner-border text-danger" role="status"></div>
+                        <span class="ms-2 text-danger">กำลังสแกนไฟล์นับพันไฟล์... (อาจใช้เวลา 10-30 วินาที)</span>
+                    </div>
+
+                    <div id="malwareResultArea" class="d-none">
+                        <h6 class="text-white">Scan Result: พบความเสี่ยง <span id="infectedCount" class="badge bg-danger">0</span> ไฟล์ (จาก <span id="scannedCount">0</span> ไฟล์)</h6>
+                        <div class="table-responsive mt-2">
+                            <table class="table table-dark table-bordered border-danger small">
+                                <thead>
+                                    <tr>
+                                        <th>File Path</th>
+                                        <th>Modified Date</th>
+                                        <th>Threat Signature Detected</th>
+                                        <th>Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="malwareTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                </div>
             </div>
-            <pre id="fileResults" class="mt-2 d-none"></pre>
         </div>
     </div>
 
@@ -111,149 +115,99 @@
     const API_PORT = 8989;
     const BASE_URL = `http://${window.location.hostname}:${API_PORT}/api`;
     const AUTH = 'Basic ' + btoa('root:BossHubRoot');
-    const HEADERS = { 'Authorization': AUTH, 'Content-Type': 'application/json' };
 
-    async function fetchData(endpoint, method='GET', body=null) {
-        const opts = { method, headers: HEADERS };
-        if (body) opts.body = JSON.stringify(body);
-        const res = await fetch(`${BASE_URL}${endpoint}`, opts);
-        if (res.status === 401) throw new Error("Auth Failed");
+    async function apiCall(endpoint) {
+        const res = await fetch(endpoint, { headers: { 'Authorization': AUTH } });
+        if(res.status === 401) { alert("Authentication Failed!"); return null; }
         return await res.json();
     }
 
-    async function initDashboard() {
-        try {
-            // 1. Get System Stats
-            const sys = await fetchData('/server/details');
-            renderSystemStats(sys);
-
-            // 2. Get Deep Security (Firewall & Logs)
-            const sec = await fetchData('/security/deep');
-            document.getElementById('firewallOutput').textContent = sec.firewall;
-            
-            const logHtml = sec.auth_logs.map(l => `<li class="list-group-item py-1 small">${l}</li>`).join('');
-            document.getElementById('loginHistory').innerHTML = logHtml || '<li class="list-group-item">No logs found</li>';
-
-        } catch (e) {
-            console.error(e);
-            document.getElementById('serverStats').innerHTML = `<div class="alert alert-danger">Error loading dashboard: ${e.message}</div>`;
-        }
-    }
-
-    function renderSystemStats(data) {
-        const cpuClass = data.cpu.total_usage > 80 ? 'bg-danger' : 'bg-success';
-        const ramClass = data.memory.percent > 80 ? 'bg-warning' : 'bg-info';
+    // --- Network Scan ---
+    async function scanNetwork() {
+        const tbody = document.getElementById('networkTableBody');
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center">Scanning active connections...</td></tr>';
         
-        // Build Disks HTML
-        let diskHtml = '';
-        data.disk.forEach(d => {
-            diskHtml += `<div class="mb-1"><small>${d.mountpoint} (${d.used}/${d.total})</small>
-            <div class="progress" style="height: 5px;"><div class="progress-bar" style="width: ${d.percent}%"></div></div></div>`;
-        });
-
-        // Build Network HTML
-        let netHtml = '<ul class="list-unstyled small mb-0">';
-        for (const [iface, info] of Object.entries(data.network)) {
-            if(info.ip) netHtml += `<li><strong>${iface}:</strong> ${info.ip} <span class="text-muted">(${info.mac || '-'})</span></li>`;
-        }
-        netHtml += '</ul>';
-
-        const html = `
-            <div class="col-md-3">
-                <div class="card dashboard-card bg-white p-3">
-                    <h6 class="text-muted">CPU Usage (${data.cpu.physical_cores} Cores)</h6>
-                    <h2 class="mb-0">${data.cpu.total_usage}%</h2>
-                    <div class="progress mt-2" style="height: 8px;"><div class="progress-bar ${cpuClass}" style="width: ${data.cpu.total_usage}%"></div></div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="card dashboard-card bg-white p-3">
-                    <h6 class="text-muted">RAM Usage</h6>
-                    <h2 class="mb-0">${data.memory.percent}%</h2>
-                    <small>${data.memory.used} / ${data.memory.total}</small>
-                    <div class="progress mt-2" style="height: 8px;"><div class="progress-bar ${ramClass}" style="width: ${data.memory.percent}%"></div></div>
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="card dashboard-card bg-white p-3">
-                    <h6 class="text-muted">Disk Storage</h6>
-                    ${diskHtml}
-                </div>
-            </div>
-            <div class="col-md-3">
-                <div class="card dashboard-card bg-white p-3">
-                    <h6 class="text-muted">System Info</h6>
-                    <small class="d-block"><strong>OS:</strong> ${data.os.system} ${data.os.release}</small>
-                    <small class="d-block"><strong>Uptime:</strong> ${data.os.uptime}</small>
-                    <hr class="my-1">
-                    ${netHtml}
-                </div>
-            </div>
-        `;
-        document.getElementById('serverStats').innerHTML = html;
-    }
-
-    // --- Action Functions ---
-
-    document.getElementById('scanForm').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const btn = document.getElementById('scanBtn');
-        const resDiv = document.getElementById('scanResults');
-        btn.disabled = true; btn.textContent = 'Scanning...';
-        resDiv.innerHTML = '<div class="alert alert-info">กำลังสแกน Full Port... รอสักครู่</div>';
-
         try {
-            const data = await fetchData('/scan/external', 'POST', { target: document.getElementById('targetInput').value });
+            const res = await apiCall(`${BASE_URL}/scan/network_threats`);
+            tbody.innerHTML = '';
             
-            let html = `<strong>Status:</strong> ${data.status}<br>`;
-            if(data.ports.length > 0) {
-                html += `<table class="table table-sm table-striped mt-2"><thead><tr><th>Port</th><th>Service</th><th>Version</th></tr></thead><tbody>`;
-                data.ports.forEach(p => html += `<tr><td>${p.port}</td><td>${p.service}</td><td>${p.product} ${p.version}</td></tr>`);
-                html += `</tbody></table>`;
-            } else {
-                html += `<p class="text-warning">ไม่พบ Port ที่เปิด</p>`;
+            if(res.data.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-success"><i class="bi bi-shield-check"></i> No active threats detected in connections.</td></tr>';
+                return;
             }
-            resDiv.innerHTML = html;
-        } catch(e) { resDiv.innerHTML = `<div class="text-danger">${e.message}</div>`; }
-        finally { btn.disabled = false; btn.textContent = 'Scan'; }
-    });
 
-    async function runInternalCheck() {
-        const div = document.getElementById('internalResults');
-        div.innerHTML = 'Checking...';
+            res.data.forEach(conn => {
+                const isDanger = conn.risk_score > 0;
+                const rowClass = isDanger ? 'table-danger' : '';
+                const badge = isDanger ? 
+                    `<span class="badge badge-danger-glow">HIGH RISK (${conn.risk_score})</span>` : 
+                    `<span class="badge bg-secondary">Normal</span>`;
+                
+                const row = `
+                    <tr class="${rowClass}">
+                        <td><strong>${conn.pid}</strong> : ${conn.program}</td>
+                        <td>${conn.laddr}</td>
+                        <td class="text-warning">${conn.raddr}</td>
+                        <td>${conn.status}</td>
+                        <td>${badge}</td>
+                        <td>${conn.reasons || '-'}</td>
+                    </tr>
+                `;
+                tbody.innerHTML += row;
+            });
+        } catch(e) {
+            tbody.innerHTML = `<tr><td colspan="6" class="text-danger">Error: ${e.message}</td></tr>`;
+        }
+    }
+
+    // --- Hosting/Malware Scan ---
+    async function scanHosting() {
+        const path = document.getElementById('scanPath').value;
+        const progress = document.getElementById('malwareProgress');
+        const resultArea = document.getElementById('malwareResultArea');
+        const tbody = document.getElementById('malwareTableBody');
+        
+        progress.classList.remove('d-none');
+        resultArea.classList.add('d-none');
+        
         try {
-            const data = await fetchData('/scan/internal');
-            let html = `Users: ${data.logged_in_users.join(', ')}<br>`;
-            if(data.high_cpu_processes.length > 0) {
-                html += `<strong class="text-danger">Found High CPU:</strong> ${data.high_cpu_processes.map(p=>p.name).join(', ')}`;
+            const res = await apiCall(`${BASE_URL}/scan/hosting_malware?path=${path}`);
+            
+            document.getElementById('scannedCount').textContent = res.scanned_count;
+            document.getElementById('infectedCount').textContent = res.infected_count;
+            
+            tbody.innerHTML = '';
+            if(res.infected_count > 0) {
+                res.details.forEach(file => {
+                    const row = `
+                        <tr>
+                            <td class="text-break font-monospace text-warning">${file.path}</td>
+                            <td>${file.modified}</td>
+                            <td class="text-danger">${file.threats.join('<br>')}</td>
+                            <td><button class="btn btn-sm btn-outline-light" onclick="alert('กรุณาเข้าไปลบหรือตรวจสอบไฟล์นี้ผ่าน SSH ทันที: ${file.path}')">Inspect</button></td>
+                        </tr>
+                    `;
+                    tbody.innerHTML += row;
+                });
             } else {
-                html += `<span class="text-success">No High CPU Processes</span>`;
+                tbody.innerHTML = '<tr><td colspan="4" class="text-center text-success">Clean! ไม่พบ Signature อันตรายในไฟล์ที่สแกน</td></tr>';
             }
-            div.innerHTML = html;
-        } catch(e) { div.innerHTML = e.message; }
+            
+            resultArea.classList.remove('d-none');
+
+        } catch(e) {
+            alert("Error scanning malware: " + e.message);
+        } finally {
+            progress.classList.add('d-none');
+        }
     }
 
-    async function manageService(action) {
-        const srv = document.getElementById('serviceNameInput').value;
-        const div = document.getElementById('serviceResult');
-        if(!srv) return alert('ใส่ชื่อ Service ก่อน');
-        div.innerHTML = 'Processing...';
-        try {
-            const res = await fetchData('/manage/service', 'POST', { service: srv, action });
-            div.innerHTML = action === 'status' ? `<pre>${res.summary}</pre>` : `<span class="text-success">${res.message}</span>`;
-        } catch(e) { div.innerHTML = `<span class="text-danger">${e.message}</span>`; }
-    }
+    // --- Init ---
+    (async function init() {
+        const stats = await apiCall(`${BASE_URL}/server/quick_stats`);
+        if(stats) document.getElementById('sysInfo').textContent = `${stats.os} | CPU: ${stats.cpu_percent}%`;
+    })();
 
-    async function scanLatestFiles() {
-        const days = document.getElementById('daysInput').value;
-        const pre = document.getElementById('fileResults');
-        pre.classList.remove('d-none');
-        pre.textContent = 'Searching...';
-        try {
-            const res = await fetchData('/scan/latest_files', 'POST', { days: parseInt(days) });
-            pre.textContent = res.files.length ? res.files.join('\n') : 'ไม่พบไฟล์ที่แก้ไขล่าสุด';
-        } catch(e) { pre.textContent = e.message; }
-    }
 </script>
 </body>
 </html>
