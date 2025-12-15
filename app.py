@@ -6,7 +6,7 @@ import subprocess
 import logging
 import base64
 import os
-import socket
+import shutil
 import datetime
 import re
 from functools import wraps
@@ -19,7 +19,7 @@ USERNAME = 'root'
 PASSWORD = 'BossHubRoot' 
 LISTEN_PORT = 8989
 
-# --- Signatures & Constants ---
+# --- Signatures ---
 MALWARE_SIGNATURES = {
     r'eval\s*\(': 'PHP Web Shell execution',
     r'base64_decode\s*\(': 'Obfuscated Code (Base64)',
@@ -56,86 +56,63 @@ def get_size(bytes, suffix="B"):
         if bytes < factor: return f"{bytes:.2f}{unit}{suffix}"
         bytes /= factor
 
-# --- 1. System Info & Monitoring ---
+# --- 1. System Info ---
 def get_system_details():
     uname = platform.uname()
     boot_time = datetime.datetime.fromtimestamp(psutil.boot_time())
-    
-    # Disk
     partitions = []
     try:
         for p in psutil.disk_partitions():
             try:
                 u = psutil.disk_usage(p.mountpoint)
-                partitions.append({"mount": p.mountpoint, "total": get_size(u.total), "used": get_size(u.used), "percent": u.percent})
+                partitions.append({"mount": p.mountpoint, "total": get_size(u.total), "percent": u.percent})
             except: pass
     except: pass
 
-    # Network IPs
     net_info = {}
     try:
         for name, addrs in psutil.net_if_addrs().items():
             for addr in addrs:
-                if str(addr.family) == 'AddressFamily.AF_INET':
-                    net_info[name] = addr.address
+                if str(addr.family) == 'AddressFamily.AF_INET': net_info[name] = addr.address
     except: pass
 
     return {
         "os": f"{uname.system} {uname.release}",
         "uptime": str(datetime.datetime.now() - boot_time).split('.')[0],
-        "cpu": {"cores": psutil.cpu_count(), "percent": psutil.cpu_percent()},
-        "ram": {"total": get_size(psutil.virtual_memory().total), "percent": psutil.virtual_memory().percent},
+        "cpu": {"percent": psutil.cpu_percent()},
+        "ram": {"percent": psutil.virtual_memory().percent},
         "disk": partitions,
         "network": net_info
     }
 
 def get_deep_security_info():
-    """Firewall & Auth Logs"""
     firewall = "N/A"
     logs = []
     if platform.system() == "Linux":
-        try:
-            firewall = subprocess.run(['sudo', 'ufw', 'status'], capture_output=True, text=True).stdout or "UFW Inactive"
+        try: firewall = subprocess.run(['sudo', 'ufw', 'status'], capture_output=True, text=True).stdout or "UFW Inactive"
         except: firewall = "Error checking UFW"
-        
-        try:
-            logs = subprocess.check_output(['last', '-n', '5'], timeout=2).decode('utf-8').split('\n')
+        try: logs = subprocess.check_output(['last', '-n', '5'], timeout=2).decode('utf-8').split('\n')
         except: logs = ["Error reading logs"]
     return {"firewall": firewall, "logs": [l for l in logs if l.strip()]}
 
-# --- 2. Threat Hunting (Network & Process) ---
+# --- 2. Threat Hunting ---
 def analyze_network_threats():
     suspicious = []
     try:
         for conn in psutil.net_connections(kind='inet'):
             if conn.status != 'ESTABLISHED' or (conn.raddr and conn.raddr.ip == '127.0.0.1'): continue
-            
-            risk = 0
-            reasons = []
-            
-            # Check Port
+            risk = 0; reasons = []
             if conn.raddr and conn.raddr.port in MINING_PORTS:
                 risk += 10; reasons.append(f"Mining Port {conn.raddr.port}")
-            
-            # Check Process
             try:
                 proc = psutil.Process(conn.pid)
-                if any(x in proc.name().lower() for x in ['xmrig', 'minerd', 'kworker_ds']):
-                    risk += 10; reasons.append("Miner Process Name")
-                if proc.exe().startswith('/tmp') or proc.exe().startswith('/dev/shm'):
-                    risk += 8; reasons.append("Running from /tmp")
+                if any(x in proc.name().lower() for x in ['xmrig', 'minerd']): risk += 10; reasons.append("Miner Process")
             except: pass
-
             if risk > 0:
-                suspicious.append({
-                    "pid": conn.pid, "laddr": f"{conn.laddr.ip}:{conn.laddr.port}",
-                    "raddr": f"{conn.raddr.ip}:{conn.raddr.port}" if conn.raddr else "N/A",
-                    "risk": risk, "reasons": ", ".join(reasons)
-                })
+                suspicious.append({"pid": conn.pid, "laddr": f"{conn.laddr.ip}:{conn.laddr.port}", "raddr": f"{conn.raddr.ip}:{conn.raddr.port}", "risk": risk, "reasons": ", ".join(reasons)})
     except Exception as e: return {"error": str(e)}
     return suspicious
 
-# --- 3. Malware Scanner (Hosting) ---
 def scan_hosting_files(path_root='/home'):
     if platform.system() != "Linux": return {"error": "Linux Only"}
     infected = []
@@ -144,48 +121,85 @@ def scan_hosting_files(path_root='/home'):
         for root, dirs, files in os.walk(path_root):
             if 'logs' in root or 'mail' in root: continue
             for file in files:
-                if any(file.endswith(x) for x in ['.php', '.py', '.sh']):
+                if any(file.endswith(x) for x in ['.php', '.py', '.sh', '.pl']):
                     fpath = os.path.join(root, file)
                     count += 1
                     try:
                         with open(fpath, 'r', errors='ignore') as f:
-                            content = f.read(50000) # Read first 50KB
+                            content = f.read(50000)
                             found = [desc for sig, desc in MALWARE_SIGNATURES.items() if re.search(sig, content, re.IGNORECASE)]
-                            if found:
-                                infected.append({"path": fpath, "threats": found})
+                            if found: infected.append({"path": fpath, "threats": found})
                     except: pass
-            if count > 3000: break # Safety limit
+            if count > 3000: break
     except Exception as e: return {"error": str(e)}
     return {"scanned": count, "infected": infected}
 
-# --- 4. System Tools (Nmap, Service, Files) ---
+# --- 3. Quarantine / Fix Logic (New!) ---
+def quarantine_file(file_path):
+    if not os.path.exists(file_path):
+        return {"status": "error", "message": "File not found"}
+    
+    try:
+        # Check permission
+        if not os.access(file_path, os.W_OK):
+            return {"status": "error", "message": "Permission denied. Run as root?"}
+
+        file_ext = os.path.splitext(file_path)[1].lower()
+        
+        # Read original content
+        with open(file_path, 'r', errors='ignore') as f:
+            content = f.read()
+
+        # Logic Update based on File Type
+        if file_ext == '.php':
+            # PHP: Wrap in /* */
+            # Note: We wrap strictly to stop execution.
+            new_content = f"/* \n[BOSSHUB QUARANTINE - {datetime.datetime.now()}]\n\n{content}\n\n*/"
+            with open(file_path, 'w') as f:
+                f.write(new_content)
+            return {"status": "success", "message": "PHP File Commented Out (/* */)"}
+
+        elif file_ext in ['.py', '.sh', '.pl']:
+            # Python/Shell: Comment with #
+            lines = content.split('\n')
+            new_lines = [f"# {line}" for line in lines]
+            new_content = f"# [BOSSHUB QUARANTINE - {datetime.datetime.now()}]\n" + "\n".join(new_lines)
+            with open(file_path, 'w') as f:
+                f.write(new_content)
+            return {"status": "success", "message": f"Script Commented Out (#)"}
+
+        else:
+            # Others: Rename to .quarantined
+            new_path = file_path + ".quarantined"
+            os.rename(file_path, new_path)
+            return {"status": "success", "message": f"File renamed to {os.path.basename(new_path)}"}
+
+    except Exception as e:
+        app.logger.error(f"Quarantine error: {e}")
+        return {"status": "error", "message": str(e)}
+
+# --- 4. Tools ---
 def run_nmap(target):
     try:
         nm = nmap.PortScanner()
-        nm.scan(target, arguments='-sV -T4 -p 1-1000 --script http-headers') # Quick Scan top 1000
+        nm.scan(target, arguments='-sV -T4 -p 1-1000') 
         host = nm.all_hosts()[0]
-        ports = []
-        if 'tcp' in nm[host]:
-            for p in nm[host]['tcp']:
-                ports.append({'port': p, 'state': nm[host]['tcp'][p]['state'], 'service': nm[host]['tcp'][p]['name']})
+        ports = [{'port': p, 'state': nm[host]['tcp'][p]['state'], 'service': nm[host]['tcp'][p]['name']} for p in nm[host]['tcp']]
         return {"status": nm[host].state, "ports": ports}
-    except Exception as e: raise Exception(str(e))
+    except Exception as e: return {"error": str(e)}
 
 def manage_service(name, action):
-    if action not in ['start', 'stop', 'restart', 'status']: return {"error": "Invalid action"}
-    cmd = ['sudo', 'systemctl', action, name]
     try:
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+        res = subprocess.run(['sudo', 'systemctl', action, name], capture_output=True, text=True, timeout=10)
         return {"output": res.stdout + res.stderr}
     except Exception as e: return {"error": str(e)}
 
 def find_recent_files(days=1):
-    cmd = ['sudo', 'find', '/', '-mount', '-path', '/proc', '-prune', '-o', '-path', '/sys', '-prune', 
-           '-o', '-mtime', f'-{days}', '-type', 'f', '-print']
     try:
+        cmd = ['sudo', 'find', '/', '-mount', '-path', '/proc', '-prune', '-o', '-path', '/sys', '-prune', '-o', '-mtime', f'-{days}', '-type', 'f', '-print']
         out = subprocess.check_output(cmd, stderr=subprocess.PIPE).decode('utf-8').split('\n')
-        return [x for x in out if x.strip()][:100] # Limit 100 files
-    except Exception as e: return []
+        return [x for x in out if x.strip()][:100]
+    except: return []
 
 # --- Routes ---
 @app.route('/')
@@ -206,8 +220,13 @@ def api_threat_net(): return jsonify(analyze_network_threats())
 
 @app.route('/api/threats/malware')
 @requires_auth
-def api_threat_malware(): 
-    return jsonify(scan_hosting_files(request.args.get('path', '/home')))
+def api_threat_malware(): return jsonify(scan_hosting_files(request.args.get('path', '/home')))
+
+# New Route for Fixing Files
+@app.route('/api/threats/fix', methods=['POST'])
+@requires_auth
+def api_threat_fix():
+    return jsonify(quarantine_file(request.json.get('path')))
 
 @app.route('/api/tools/nmap', methods=['POST'])
 @requires_auth
@@ -217,14 +236,11 @@ def api_nmap():
 
 @app.route('/api/tools/service', methods=['POST'])
 @requires_auth
-def api_service():
-    d = request.json
-    return jsonify(manage_service(d['service'], d['action']))
+def api_service(): return jsonify(manage_service(request.json['service'], request.json['action']))
 
 @app.route('/api/tools/files', methods=['POST'])
 @requires_auth
-def api_files():
-    return jsonify({"files": find_recent_files(request.json.get('days', 1))})
+def api_files(): return jsonify({"files": find_recent_files(request.json.get('days', 1))})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=LISTEN_PORT, debug=False)
